@@ -1,3 +1,5 @@
-./docs
-./docs/
-./*.sqlite3
+docs
+docs/
+*.sqlite3
+tests
+tests/
