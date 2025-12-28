@@ -162,7 +162,12 @@ function index_document() {
 
 	local mime=$(file -b --mime-type "$filepath")
 
-	if [ "$mime" == "application/pdf" ]; then
+	if [ "${mime:0:6}" == "image/" ]; then
+		# If file is an image, just skip it
+		rm -rf "$tmpdir"
+		return 0
+
+	elif [ "$mime" == "application/pdf" ]; then
 		## If document is a PDF, convert it to text first.
 
 		ocrmypdf --deskew -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
