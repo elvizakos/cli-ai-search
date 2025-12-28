@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ollama="http://ollama.jetson.home.lan:11434"
+
+embedmodel="nomic-embed-text-v2-moe:latest"
+#embedmodel="embeddinggemma:latest"
+#embedmodel="mxbai-embed-large:latest"
+#embedmodel="nomic-embed-text:latest"
+#embedmodel="all-minilm:33m"
+
+top_k='5'
+temperature='0'
+
+embeddingsdb="./embeddings.sqlite3"
+
+CHUNK_SIZE=500
+OVERLAP=100
+
+function escapeString () {
+	echo "$1" | sed "s/'/''/g"
+}
+
+function build_database () {
+	local db="${1:-$embeddingsdb}"
+
+	sqlite3 "$db" <<'SQL'
+
+-- Drop any old version (for a clean start)
+DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS chunks;
+
+-- Πίνακας εγγράφων
+CREATE TABLE documents (
+    id			INTEGER PRIMARY KEY AUTOINCREMENT,
+	filepath	TEXT NOT NULL,
+    filename	TEXT NOT NULL,
+	content		TEXT NOT NULL,
+	scanned		TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Πίνακας chunks με embeddings
+CREATE TABLE chunks (
+	id				INTEGER PRIMARY KEY AUTOINCREMENT,
+	document_id		INTEGER NOT NULL,
+	model_name		TEXT NOT NULL,
+	chunk_index 	INTEGER NOT NULL,
+	position		INTEGER NOT NULL,
+	content 		TEXT NOT NULL,
+	token_count		INTEGER,
+	embedding		JSON NOT NULL,
+	created_at		TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_documents_filepath ON documents(filepath);
+
+SQL
+
+}
+
+function chunk_text() {
+    local text="$1"
+    local chunk_size="${2:-$CHUNK_SIZE}"
+    local overlap="${3:-$OVERLAP}"
+    
+    local text_length=${#text}
+    local start=0
+    
+    while [ $start -lt $text_length ]; do
+        local end=$((start + chunk_size))
+        
+        if [ $end -ge $text_length ]; then
+            echo "${text:$start}"
+            break
+        fi
+        
+        local chunk="${text:$start:$chunk_size}"
+        local remaining="${text:$end:50}"
+        
+        # Αναζήτηση για σημείο στίξης ή κενό
+        if [[ "$remaining" =~ ^[^.!?\n[:space:]]+ ]]; then
+            local extra="${BASH_REMATCH[0]}"
+            chunk="${chunk}${extra}"
+            end=$((end + ${#extra}))
+        fi
+        
+        echo "$chunk"
+        start=$((end - overlap))
+    done
+}
+
+function get_embedding() {
+    local text="$1"
+    local escaped_text
+    
+    # Escape για JSON
+    escaped_text=$(echo "$text" | jq -Rs .)
+    
+    # API call
+    local response
+    response=$(curl -sf "${ollama}/api/embeddings" \
+					-H "Content-Type: application/json" \
+					-d "{\"model\": \"$embedmodel\", \"prompt\": $escaped_text, \"stream\": false, \"options\": {\"temperature\": $temperature}}" 2>&1)
+
+    if [ $? -ne 0 ] || echo "$response" | jq -e .error > /dev/null 2>&1; then
+        echo "ERROR: $(echo "$response" | jq -r .error 2>/dev/null || echo "$response")" >&2
+        return 1
+    fi
+    
+    # Επιστροφή JSON array
+    echo "$response" | jq -c .embedding
+}
+
+function cosine_similarity() {
+    local emb1="$1"
+    local emb2="$2"
+    
+    awk -v e1="$emb1" -v e2="$emb2" '
+    BEGIN {
+        # Remove brackets and parse
+        gsub(/[\[\]]/, "", e1)
+        gsub(/[\[\]]/, "", e2)
+        
+        n1 = split(e1, arr1, ",")
+        n2 = split(e2, arr2, ",")
+        
+        if (n1 != n2) exit 1
+        
+        dot = 0; norm1 = 0; norm2 = 0
+        
+        for (i = 1; i <= n1; i++) {
+            v1 = arr1[i] + 0  # Convert to number
+            v2 = arr2[i] + 0
+            
+            dot += v1 * v2
+            norm1 += v1 * v1
+            norm2 += v2 * v2
+        }
+        
+        printf "%.10f\n", dot / (sqrt(norm1) * sqrt(norm2))
+    }'
+}
+
+function index_document() {
+    local filepath="$1"
+	local replace="$2"
+    
+    if [ ! -f "$filepath" ]; then
+        echo "ERROR: File not found: $filepath" >&2
+        return 1
+    fi
+
+	local tmpdir="$(mktemp -d --suffix='cli-ai-search')"
+	
+    local filename
+    filename=$(basename "$filepath")
+    local content
+
+	local mime=$(file -b --mime-type "$filepath")
+
+	if [ "$mime" == "application/pdf" ]; then
+		## If document is a PDF, convert it to text first.
+
+		ocrmypdf --deskew -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
+		content=$(cat "${tmpdir}/extracted.txt")
+		rm -rf "$tmpdir"
+
+	elif [ "$mime" == "text/html" ]; then
+		## If document is an HTML, convert it to text first.
+
+		pandoc -f html -t plain -o "${tmpdir}/extracted.txt" "$filepath"
+		content=$(cat "${tmpdir}/extracted.txt")
+		rm -rf "$tmpdir"
+
+	# elif [ "$mime" == "text/plain" ]; then
+	# 	## 
+
+	# 	content=$(cat "$filepath")
+
+	else
+
+		if pandoc --quiet -t plain -o "${tmpdir}/extracted.txt" "$filepath"; then
+			content=$(cat "${tmpdir}/extracted.txt")
+			rm -rf "$tmpdir"
+		else
+			echo "ERROR: Unknown document format: $filepath" >&2
+			return 1
+		fi
+
+	fi
+
+    # Έλεγχος αν υπάρχει ήδη
+    local existing_id
+    existing_id=$(sqlite3 "$embeddingsdb" \
+						  "SELECT id FROM documents WHERE filepath='$(echo "$filepath" | sed "s/'/''/g")';")
+    
+    if [ -n "$existing_id" ]; then
+        [ "$replace" != "y" ] && return 0
+        sqlite3 "$embeddingsdb" "DELETE FROM documents WHERE id=$existing_id;"
+    fi
+    
+    # Εισαγωγή εγγράφου
+    local doc_id
+    doc_id=$(sqlite3 "$embeddingsdb" <<EOF
+INSERT INTO documents (filename, filepath, content)
+VALUES (
+    $(echo "$filename" | jq -Rs .),
+    $(echo "$filepath" | jq -Rs .),
+    $(echo "$content" | jq -Rs .)
+);
+SELECT last_insert_rowid();
+EOF
+		  )
+
+    # Chunking
+    local chunk_index=0
+    local total_chunks=0
+
+    while IFS= read -r chunk; do
+        [ -z "$chunk" ] && continue
+        total_chunks=$((total_chunks + 1))
+    done < <(chunk_text "$content" "$CHUNK_SIZE" "$OVERLAP")
+
+    chunk_index=0
+
+    while IFS= read -r chunk; do
+        [ -z "$chunk" ] && continue
+        
+        local token_count=${#chunk}
+        
+        # Δημιουργία embedding
+        local embedding_json
+        if ! embedding_json=$(get_embedding "$chunk"); then
+            chunk_index=$((chunk_index + 1))
+            continue
+        fi
+        
+        # Αποθήκευση στη βάση με JSON
+        sqlite3 "$embeddingsdb" <<EOF
+INSERT INTO chunks (document_id, chunk_index, content, token_count, embedding, model_name)
+VALUES (
+    $doc_id,
+    $chunk_index,
+    $(echo "$chunk" | jq -Rs .),
+    $token_count,
+    json('$embedding_json'),
+    '$embedmodel'
+);
+EOF
+        
+        chunk_index=$((chunk_index + 1))
+    done < <(chunk_text "$content" "$CHUNK_SIZE" "$OVERLAP")
+    
+}
+
+function search() {
+    local query="$1"
+    local top_k="${2:-$top_k}"
+
+	local tmpdir=$(mktemp -d --suffix='cli-ai-search')
+
+    # Έλεγχος αν υπάρχουν indexed documents
+    local doc_count
+    doc_count=$(sqlite3 "$embeddingsdb" "SELECT COUNT(*) FROM documents;" 2>/dev/null || echo "0")
+    
+    if [ "$doc_count" -eq 0 ]; then
+        echo "ERROR: Database is empty." >&2
+        return 1
+    fi
+    
+    local query_embedding
+    if ! query_embedding=$(get_embedding "$query"); then
+        echo "ERROR: Failed to generate query embedding" >&2
+        return 1
+    fi
+    
+    # Ανάκτηση chunks με embeddings
+    local temp_results
+    temp_results="$tmpdir/results"
+    
+    sqlite3 -json "$embeddingsdb" <<EOF > "$temp_results"
+SELECT 
+    c.id,
+    c.content,
+    c.chunk_index,
+    d.filename,
+    d.filepath,
+    json_extract(c.embedding, '$') as embedding
+FROM chunks c
+JOIN documents d ON c.document_id = d.id
+WHERE c.embedding IS NOT NULL;
+EOF
+
+    # Υπολογισμός similarities
+    local temp_scores
+    temp_scores="$tmpdir/scores"
+    
+    echo "$query_embedding" > "${temp_scores}.query"
+    
+    local processed=0
+    local total
+    total=$(jq 'length' "$temp_results")
+    
+    jq -c '.[]' "$temp_results" | while read -r row; do
+        processed=$((processed + 1))
+
+        local chunk_id
+        chunk_id=$(echo "$row" | jq -r .id)
+        local content
+        content=$(echo "$row" | jq -r .content)
+        local chunk_index
+        chunk_index=$(echo "$row" | jq -r .chunk_index)
+        local filename
+        filename=$(echo "$row" | jq -r .filename)
+        local filepath
+        filepath=$(echo "$row" | jq -r .filepath)
+        local doc_embedding
+        doc_embedding=$(echo "$row" | jq -r .embedding)
+        local similarity
+
+        similarity=$(cosine_similarity "$query_embedding" "$doc_embedding")
+
+        echo "$similarity|$chunk_id|$chunk_index|$filename|$filepath|$content" >> "$temp_scores"
+    done
+    
+    local rank=0
+    sort -t'|' -k1 -rn "$temp_scores" | head -n "$top_k" | while IFS='|' read -r score chunk_id chunk_index filename filepath content; do
+        echo "$score:$filepath:$content"
+    done
+
+    # Clean temp files
+    rm -f "$tmpdir"
+}
+
+if [ "$1" == "install" ]; then
+	if [ "$(id -u)" != "0" ]; then
+
+		echo "Must be root!"
+
+	else
+
+		apt-get install inotify-tools ocrmypdf tesseract-ocr tesseract-ocr-all imagemagick ghostscript poppler-utils
+
+	fi
+
+elif [ "$1" == "build" ]; then
+
+	build_database "$embeddingsdb"
+
+elif [ "$1" == "scan" ]; then
+	shift
+
+	rpath="$(realpath $1)"
+	e="$(realpath $0)"
+
+	find "$rpath" -type f -exec $e 'add' {} \;
+
+elif [ "$1" == "add" ]; then
+
+	index_document "$2" "y"
+
+elif [ "$1" == "embed" ]; then
+
+	get_embedding "$1"
+
+elif [ "$1" == "search" ]; then
+	shift
+	query="$1"
+	results="${2:-$top_k}"
+	search "$query" "$results"
+
+fi
