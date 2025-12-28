@@ -46,7 +46,6 @@ CREATE TABLE chunks (
 	document_id		INTEGER NOT NULL,
 	model_name		TEXT NOT NULL,
 	chunk_index 	INTEGER NOT NULL,
-	position		INTEGER NOT NULL,
 	content 		TEXT NOT NULL,
 	token_count		INTEGER,
 	embedding		JSON NOT NULL,
