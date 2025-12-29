@@ -147,7 +147,9 @@ function cosine_similarity() {
 function index_document() {
     local filepath="$1"
 	local replace="$2"
-    
+
+    echo -n "Inserting file \"$filepath\": "
+
     if [ ! -f "$filepath" ]; then
         echo "ERROR: File not found: $filepath" >&2
         return 1
@@ -163,22 +165,29 @@ function index_document() {
 
 	if [ "${mime:0:6}" == "image/" ]; then
 		# If file is an image, just skip it
+
+		echo "Abord (is an image)"
 		rm -rf "$tmpdir"
 		return 0
 
-	elif [ "$mime" == "application/pdf" ]; then
-		## If document is a PDF, convert it to text first.
+	elif [ "$mime" == "application/pdf" ]; then ## If document is a PDF, convert it to text first.
 
+		echo ""
+		echo -n "	> Extracting text from PDF: "
 		ocrmypdf --deskew -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
 		content=$(cat "${tmpdir}/extracted.txt")
 		rm -rf "$tmpdir"
+		echo "Done"
 
 	elif [ "$mime" == "text/html" ]; then
 		## If document is an HTML, convert it to text first.
 
+		echo ""
+		echo -n "	> Convert to plain text: "
 		pandoc -f html -t plain -o "${tmpdir}/extracted.txt" "$filepath"
 		content=$(cat "${tmpdir}/extracted.txt")
 		rm -rf "$tmpdir"
+		echo "Done"
 
 	# elif [ "$mime" == "text/plain" ]; then
 	# 	## 
@@ -186,10 +195,29 @@ function index_document() {
 	# 	content=$(cat "$filepath")
 
 	else
+		local filenameext="${filename##*.}"
 
-		if pandoc --quiet -t plain -o "${tmpdir}/extracted.txt" "$filepath"; then
-			content=$(cat "${tmpdir}/extracted.txt")
-			rm -rf "$tmpdir"
+		# local acceptedext=(
+		# 	"txt"
+		# 	"doc"
+		# 	"docx"
+		# 	"odt"
+		# )
+
+		if [ "$filenameext" == "txt" ]; then
+
+			content="$(cat "${tmpdir}/$filepath")"
+
+		elif [ "$filenameext" == "doc" ]; then
+
+			if pandoc --quiet -t plain -o "${tmpdir}/extracted.txt" "$filepath"; then
+				content=$(cat "${tmpdir}/extracted.txt")
+				rm -rf "$tmpdir"
+			else
+				echo "ERROR: Unknown document format: $filepath" >&2
+				return 1
+			fi
+
 		else
 			echo "ERROR: Unknown document format: $filepath" >&2
 			return 1
