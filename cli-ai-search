@@ -375,7 +375,6 @@ EOF
         echo "$similarity|$chunk_id|$chunk_index|$filename|$filepath|$content" >> "$temp_scores"
     done
     
-    local rank=0
     sort -t'|' -k1 -rn "$temp_scores" | head -n "$top_k" | while IFS='|' read -r score chunk_id chunk_index filename filepath content; do
         echo "$score:$filepath:$content"
     done
@@ -413,7 +412,7 @@ elif [ "$1" == "add" ]; then
 
 elif [ "$1" == "embed" ]; then
 
-	get_embedding "$1"
+	get_embedding "$2"
 
 elif [ "$1" == "search" ]; then
 	shift
