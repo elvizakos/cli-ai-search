@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+# set -euo pipefail
 
 ollama="http://ollama.jetson.home.lan:11434"
 
@@ -46,6 +46,7 @@ CREATE TABLE chunks (
 	document_id		INTEGER NOT NULL,
 	model_name		TEXT NOT NULL,
 	chunk_index 	INTEGER NOT NULL,
+	chunk_position	INTEGER NOT NULL,
 	content 		TEXT NOT NULL,
 	token_count		INTEGER,
 	embedding		JSON NOT NULL,
@@ -163,13 +164,14 @@ function index_document() {
 
 	local mime=$(file -b --mime-type "$filepath")
 
-	if [ "${mime:0:6}" == "image/" ]; then
-		# If file is an image, just skip it
+	##########################################################################################
+	if [ "${mime:0:6}" == "image/" ]; then ## If file is an image, just skip it
 
 		echo "Abord (is an image)"
 		rm -rf "$tmpdir"
 		return 0
 
+		################################################################################
 	elif [ "$mime" == "application/pdf" ]; then ## If document is a PDF, convert it to text first.
 
 		echo ""
@@ -179,8 +181,8 @@ function index_document() {
 		rm -rf "$tmpdir"
 		echo "Done"
 
-	elif [ "$mime" == "text/html" ]; then
-		## If document is an HTML, convert it to text first.
+		################################################################################
+	elif [ "$mime" == "text/html" ]; then ## If document is an HTML, convert it to text first.
 
 		echo ""
 		echo -n "	> Convert to plain text: "
@@ -189,28 +191,36 @@ function index_document() {
 		rm -rf "$tmpdir"
 		echo "Done"
 
-	# elif [ "$mime" == "text/plain" ]; then
-	# 	## 
-
-	# 	content=$(cat "$filepath")
-
+		################################################################################
 	else
 		local filenameext="${filename##*.}"
 
-		# local acceptedext=(
-		# 	"txt"
-		# 	"doc"
-		# 	"docx"
-		# 	"odt"
-		# )
+		if [ "$filenameext" == "txt" ] || [ "$mime" == "text/plain" ]; then
 
-		if [ "$filenameext" == "txt" ]; then
+			content="$(cat "$filepath")"
 
-			content="$(cat "${tmpdir}/$filepath")"
+		else
 
-		elif [ "$filenameext" == "doc" ]; then
+			local convfrom=""
 
-			if pandoc --quiet -t plain -o "${tmpdir}/extracted.txt" "$filepath"; then
+			case "$filenameext" in
+
+				docx|org|rtf|odt|epub|rst|html)
+					convfrom="-f $filenameext"
+					;;
+
+				md)
+					convfrom="-f gfm" # (GitHub-Flavored  Markdown)
+					;;
+
+				*)
+					echo "ERROR: Unknown document format: $filepath" >&2
+					return 1
+					;;
+
+			esac
+
+			if pandoc --quiet $convfrom -t plain -o "${tmpdir}/extracted.txt" "$filepath"; then
 				content=$(cat "${tmpdir}/extracted.txt")
 				rm -rf "$tmpdir"
 			else
@@ -218,9 +228,6 @@ function index_document() {
 				return 1
 			fi
 
-		else
-			echo "ERROR: Unknown document format: $filepath" >&2
-			return 1
 		fi
 
 	fi
@@ -234,15 +241,16 @@ function index_document() {
         [ "$replace" != "y" ] && return 0
         sqlite3 "$embeddingsdb" "DELETE FROM documents WHERE id=$existing_id;"
     fi
-    
+
+	echo "	INSERT TO DB"
     # Εισαγωγή εγγράφου
     local doc_id
     doc_id=$(sqlite3 "$embeddingsdb" <<EOF
 INSERT INTO documents (filename, filepath, content)
 VALUES (
-    $(echo "$filename" | jq -Rs .),
-    $(echo "$filepath" | jq -Rs .),
-    $(echo "$content" | jq -Rs .)
+    '$(escapeString "$filename")',
+    '$(escapeString "$filepath")',
+    '$(escapeString "$content")'
 );
 SELECT last_insert_rowid();
 EOF
@@ -273,19 +281,22 @@ EOF
         
         # Αποθήκευση στη βάση με JSON
         sqlite3 "$embeddingsdb" <<EOF
-INSERT INTO chunks (document_id, chunk_index, content, token_count, embedding, model_name)
+INSERT INTO chunks (document_id, chunk_index, chunk_position, content, token_count, embedding, model_name)
 VALUES (
     $doc_id,
     $chunk_index,
-    $(echo "$chunk" | jq -Rs .),
+	0,
+    '$(escapeString "$chunk")',
     $token_count,
     json('$embedding_json'),
     '$embedmodel'
 );
 EOF
-        
+	[ "$?" != "0" ] && echo "ERROR"
+
         chunk_index=$((chunk_index + 1))
     done < <(chunk_text "$content" "$CHUNK_SIZE" "$OVERLAP")
+	echo "DONE"
     
 }
 
@@ -365,7 +376,7 @@ EOF
     done
 
     # Clean temp files
-    rm -f "$tmpdir"
+    rm -rf "$tmpdir"
 }
 
 if [ "$1" == "install" ]; then
