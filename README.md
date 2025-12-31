@@ -4,7 +4,6 @@ Command line tool for semantic search.
 
 ## Requirements
 
-
   * Bash
   * curl
   * jq
