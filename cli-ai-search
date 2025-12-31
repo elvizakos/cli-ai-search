@@ -213,6 +213,11 @@ function index_document() {
 					convfrom="-f gfm" # (GitHub-Flavored  Markdown)
 					;;
 
+				ovpn)
+					echo "Not supported" >&2
+					return 1
+					;;
+
 				*)
 					echo "ERROR: Unknown document format: $filepath" >&2
 					return 1
