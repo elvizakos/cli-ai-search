@@ -4,11 +4,14 @@
 
 ollama="http://ollama.jetson.home.lan:11434"
 
-embedmodel="nomic-embed-text-v2-moe:latest"
+embedmodel="$1"
+shift
+#embedmodel="nomic-embed-text-v2-moe:latest"
 #embedmodel="embeddinggemma:latest"
 #embedmodel="mxbai-embed-large:latest"
 #embedmodel="nomic-embed-text:latest"
 #embedmodel="all-minilm:33m"
+#embedmodel="bge-m3:latest"
 
 top_k='5'
 temperature='0'
@@ -374,9 +377,10 @@ EOF
 
         echo "$similarity|$chunk_id|$chunk_index|$filename|$filepath|$content" >> "$temp_scores"
     done
-    
+
+    echo "Score	Path	Content"
     sort -t'|' -k1 -rn "$temp_scores" | head -n "$top_k" | while IFS='|' read -r score chunk_id chunk_index filename filepath content; do
-        echo "$score:$filepath:$content"
+        echo "$score	$filepath	$content"
     done
 
     # Clean temp files
