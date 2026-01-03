@@ -4,14 +4,15 @@
 
 ollama="http://ollama.jetson.home.lan:11434"
 
-embedmodel="$1"
-shift
-#embedmodel="nomic-embed-text-v2-moe:latest"
+# embedmodel="$1"
+# shift
+embedmodel="nomic-embed-text-v2-moe:latest"
+#embedmodel="bge-m3:latest"
 #embedmodel="embeddinggemma:latest"
 #embedmodel="mxbai-embed-large:latest"
 #embedmodel="nomic-embed-text:latest"
 #embedmodel="all-minilm:33m"
-#embedmodel="bge-m3:latest"
+#embedmodel="bge-large:latest"
 
 top_k='5'
 temperature='0'
@@ -20,6 +21,9 @@ embeddingsdb="./embeddings.sqlite3"
 
 CHUNK_SIZE=500
 OVERLAP=100
+
+#CHUNK_SIZE=350
+#OVERLAP=80
 
 function escapeString () {
 	echo "$1" | sed "s/'/''/g"
