@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+
+## Load config file if exists
+[ -f ~/.config/cli-ai-search/config ] && source ~/.config/cli-ai-search/config
+
+## Initialize basic variables of they haven't been set by config
+[ -z "$ollama" ]       && ollama="http://localhost:11434"				# Ollama IP
+[ -z "$embedmodel" ]   && embedmodel="nomic-embed-text-v2-moe:latest" 	# Name of the embed model to use
+[ -z "$top_k" ]        && top_k=5										# Maximum number of results to return
+[ -z "$temperature" ]  && temperature=0									# The model temperature
+
+[ -z "$embeddingsdb" ] && embeddingsdb="./embeddings.sqlite3"			# The path to sqlite3 database
+
+[ -z "$chunk_size" ]   && chunk_size=500 #
+[ -z "$overlap" ]      && overlap=100
+
+# Function for escaping strings for the sqlite3 database
+function escstr () {
+	echo "$1" | sed "s/'/''/g"
+}
+
+# Function for building the database
+function build_database () {
+			local db="${1:-$embeddingsdb}"
+
+	[ -f "$db" ] && rm "$db"
+
+	sqlite3 "$db" <<'SQL'
+-- Documents Table
+CREATE TABLE documents (
+	id			INTEGER PRIMARY KEY AUTOINCREMENT,
+	filepath	TEXT NOT NULL,
+	filename	TEXT NOT NULL,
+	scanned		TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Chunks table
+CREATE TABLE chunks (
+	id				INTEGER PRIMARY KEY AUTOINCREMENT,
+	document_id		INTEGER NOT NULL,
+	model_name		TEXT NOT NULL,
+	chunk_index		INTEGER NOT NULL,
+	chunk_position	INTEGER NOT NULL,
+	content			TEXT NOT NULL,
+	token_count		INTEGER,
+	embedding		JSON NOT NULL,
+	created_at		TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+-- Indexes
+CREATE INDEX idx_chunks_document ON chunks(document_id);
+CREATE INDEX idx_documents_filepath ON documents(filepath);
+
+SQL
+
+}
+
+# Function for cutting file contents to smaller pieces
+function chunk_text () {
+	local text="$1"
+	local chunk_size="${2:-$chunk_size}"
+	local overlap="${3:-$overlap}"
+
+	local text_length=${#text}
+	local start=0
+	local end=0
+
+	while [ $start -lt $text_length ]; do
+
+		end=$(( start + chunk_size ))
+
+		if [ $end -ge $text_length ]; then
+			echo "${text:$start}"
+			break
+		fi
+
+		local chunk="${text:$start:$chunk_size}"
+		local remaining="${text:$end:50}"
+
+		if [[ "$remaining" =~ ^[^.!?\n[:space:]]+ ]]; then
+			local extra="${BASH_REMATCH[0]}"
+			chunk="$chunk$extra"
+			end=$(( end + overlap ))
+		fi
+
+		echo "$chunk"
+		start=$(( end - overlap ))
+
+	done
+
+}
+
+# Function for using embed model for generating embed
+function embedding () {
+	local text="$1"
+	local escaped_text=$(echo "$text" | jq -Rs .)
+
+	local response=$(curl -sf "$ollama/api/embeddings" \
+						  -H "Content-Type: application/json" \
+						  -d "{\"model\":\"$embedmodel\", \"prompt\":$escaped_text,\"stram\":false,\"options\":{\"temperature\":$temperature}}" 2>&1)
+
+	if [ $? -ne 0 ] || echo "$response" | jq -e .error > /dev/null 2>&1; then
+		echo "Error: $(echo "$response" | jq -r .error 2>/dev/null || echo "$response")" >&2
+		return 1
+	fi
+
+	# Return embedding JSON array
+	echo "$response" | jq -c .embedding
+
+}
+
+# Function checking embeds using cosine similarity 
+function cosine_similarity () {
+	awk -v e1="$1" -v e2="$2" '
+	BEGIN {
+		# Remove brackets and parse
+		gsub(/[\[\]]/, "", e1)
+		gsub(/[\[\]]/, "", e2)
+
+		n1 = split(e1, arr1, ",")
+		n2 = split(e2, arr2, ",")
+
+		if (n1 != n2) exit 1
+
+		dot = 0; norm1 = 0; norm2 = 0
+
+		for (i = 1; i <= n1; i++ ) {
+			# Convert to number
+			v1 = arr1[i] + 0; v2 = arr2[i] + 0
+
+			dot += v1 * v2
+			norm1 += v1 * v1
+			norm2 += v2 * v2
+		}
+
+		printf "%.10f\n" dot / (sqrt(norm1) * sqrt(norm2))
+	}'
+}
+
+# Function for adding a document to database
+function index_document () {
+
+	local filepath="$1"
+	local replace="$2"
+
+	echo -n "Inserting file \"$filepath\": "
+
+	if [ ! -f "$filepath" ]; then
+		echo "ERROR: File not found: $filepath" >&2
+		return 1
+	fi
+
+	local tmpdir="$(mktemp -d --suffix='cli-ai-search')"
+
+	local filename
+	filename=$(basename "$filepath")
+
+	local content
+
+	local mime=$(file -b --mime-type "$filepath")
+
+	################################################################################
+	if [ "${mime:0:6}" == "image/" ]; then # Skip images
+		echo "Skip (is an image)"
+		rm -rf "$tmpdir" # Clear tmp
+		return 0
+
+	elif [ "$mime" == "application/pdf" ]; then # If document is PDF, extract text first.
+
+		echo ""
+		echo -n "	> Extracting text from PDF: "
+		ocrmypdf --deskey -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
+		content=$(cat "${tmpdir}/extracted.txt")
+		rm -rf "$tmpdir" # Clear tmp
+		echo "Done"
+
+		################################################################################
+	elif [ "$mime" == "text/html" ]; then # If document is HTML, convert it to text first.
+
+		echo ""
+		echo -n "	> Convert to plain text: "
+		pandoc -f html -t plain -o "${tmpdir}/extracted.txt" "$filepath"
+		content=$(cat "${tmpdir}/extracted.txt")
+		rm -rf "$tmpdir"
+		echo "Done"
+
+		################################################################################
+	else
+
+		local filenameext="${filename##.}" # Get filename extension
+
+		if [ "$filenameext" == "txt" ] || [ "$mime" == "text/plain" ]; then
+
+			content "$(cat "$filepath")"
+
+		else
+
+			local convfrom=""
+
+			case "$filenameext" in
+
+				docx|org|rtf|odt|epub|rst|html)
+					convfrom="-f $filenameext"
+					;;
+
+				md)
+					convfrom="-f gfm" # GitHub-Flavored Markdown
+					;;
+
+				ovpn)
+					echo "ERROR: File type not supported" >&2
+					return 1
+					;;
+
+				*)
+					echo "ERROR: Unknown document format: $filepath" >&2
+					return 1
+					;;
+
+			esac
+
+			if pandoc --quiet $convfrom -t plain -o "${tmpdir}/extracted.txt" "$filepath"; then
+				content=$(cat "${tmpdir}/extracted.txt")
+				rm -rf "$tmpdir" # Clear tmp
+			else
+				echo "ERROR: Unknown document format: $filepath" >&2
+				return 1
+			fi
+
+		fi
+
+	fi
+
+	# Check if document is already in database
+
+	local doc_id
+	doc_id=$(sqlite3 "$embeddingsdb" <<'SQL'
+INSERT INTO document (filename, filepath, content)
+VALUES (
+	'$(escstr "$filename")',
+	'$(escstr "$filepath")',
+	'$(escstr "$content")'
+);
+SELECT last_insert_rowid();
+SQL
+		  )
+
+	# Break content
+	local chunk_index=0
+	local total_chunks=0
+
+	while IFS= read-r chunk; do
+		[ -z "$chunk" ] && continue
+		total_chunks=$(( total_chunks + 1 ))
+	done < <(chunk_text "$content" "$chunk_size" "$overlap")
+
+	chunk_index=0
+
+	while IFS= read -r chunk; do
+		[ -z "$chunk" ] && continue
+
+		local token_count=${#chunk}
+
+		# Generate embedding
+		local embedding_json
+		if ! embedding_json=$(embedding "$chunk"); then
+			chunk_index=$(( chunk_index + 1 ))
+			continue
+		fi
+
+		# Save the embedding to the database
+		sqlite3 "$embeddingsdb" <<'SQL'
+INSERT INTO chunks (document_id, chunk_index, chunk_position, content, token_count, embedding, model_name)
+VALUES (
+	$doc_id,
+	$chunk_index,
+	0,
+	'$(escstr "$chunk")',
+	$token_count,
+	json('$embedding_json'),
+	'$embedmodel'
+);
+SQL
+
+		chunk_index=$(( chunk_index + 1 ))
+
+	done < <(chunk_text "$content" "$chunk_size" "$overlap")
+
+	echo "DONE"
+
+}
+
+# Function for the sematic search
+function search () {
+	local query="$1"
+	local top_k="${2:-$top_k}"
+
+	local tmpdir=$(mktemp -d --suffix='cli-ai-search')
+
+	local doc_count=$(sqlite3 "$embeddingsdb" "SELECT COUNT(*) FROM documents;" 2>/dev/null || echo "0")
+
+	if [ "$doc_count" -eq 0 ]; then
+		echo "ERROR: Database is empty." >&2
+		return 1
+	fi
+
+	local query_embedding
+	if ! query_embedding=$(embedding "$query"); then
+		echo "ERROR: Failed to generate query embedding" >&2
+		return 1
+	fi
+
+	# Get chunks from DB
+	local temp_results="$tmpdir/results"
+
+	sqlite3 -json "$embeddingsdb" <<'SQL' > "$temp_results"
+SELECT
+	c.id,
+	c.content,
+	c.chunk_index,
+	d.filepath,
+	json_extract(c.embedding, '$') as embedding
+FROM chunks c
+JOIN documents d ON c.document_id = d.id
+WHERE c.embedding IS NOT NULL;
+SQL
+
+	# Calculate similarities
+	local temp_scores="$tmpdir/scores"
+
+	#local processed=0
+	local total=$(jq 'length' "$temp_results")
+
+	jq -c '.[]' "$temp_results" | while read -r row; do
+		#processed=$(( processed + 1 ))
+
+		#local chunk_id=$(echo "$row" | jq -r .id)
+		local content=$(echo "$row" | jq -r .content)
+		#local chunk_index=$(echo "$row" | jq -r .chunk_index)
+		local filepath=$(echo "$row" | jq -r .filepath)
+		local doc_embedding=$(echo "$row" | jq -r .embedding)
+
+		local similarity=$(cosine_similarity "$query_embedding" "$doc_embedding")
+
+		echo "$similarity	$filepath	$content" >> "$temp_scores"
+	done
+
+	sort -t'	' -k1 -rn "$temp_scores" | head -n "$top_k"
+
+	# Clean temp files
+	rm -rf "$tmpdir"
+}
+
+################################################################################
+## Check command-line arguments:
+################################################################################
+
+################################################################################
+if [ "$1" == "install" ]; then
+
+	if [ "$(id -u)" != '0' ]; then
+
+		echo "Must be root!"
+
+	fi
+
+elif [ "$1" == "build" ]; then
+
+	build_database "$embeddingsdb"
+
+elif [ "$1" = "scan" ]; then
+
+	shift
+
+	rpath="$(realpath $1)"	## Real path of the given directory
+	e="$(realpath $0)"		## Real path of this script
+
+	## Walk through the files of the given directory:
+	find "$rpath" -type f -exec $e 'add' {} \;
+
+elif [ "$1" == "add" ]; then
+
+	index_document "$2" "y"
+
+elif [ "$1" == "embed" ]; then
+
+	embedding "$2"
+
+elif [ "$1" == "search" ]; then
+
+	shift
+	query="$1"
+	results="${2:-$top_k}"
+	search "$query" "$results"
+
+fi
+
