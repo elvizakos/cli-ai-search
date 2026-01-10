@@ -14,7 +14,7 @@
 [ -z "$chunk_size" ]	&& chunk_size=500								#
 [ -z "$overlap" ]		&& overlap=100
 
-[ -z "pid_file" ]		&& pid_file="/tmp/cli-ai-search-watch.pid"		# File for keeping PID of watching process
+[ -z "$pid_file" ]		&& pid_file="/tmp/cli-ai-search-watch.pid"		# File for keeping PID of watching process
 
 # Function for escaping strings for the sqlite3 database
 function escstr () {
@@ -370,11 +370,30 @@ function start_watching () {
 
 	nohup inotifywait -m -r -e create,delete,modify,move "$watch_dir" |
 		while read -r directory events filename; do
-			echo ""
-		done
+			echo "$events | $directory | $filename | $0"
+
+			# case "$events" in
+			# 	CREATE)
+			# 		$0 add "$filename"
+			# 		;;
+			# 	MOVED_TO)
+			# 		;;
+			# 	DELETE)
+			# 		;;
+			# esac
+			
+# CREATE | ./docs/ | test
+# MOVED_FROM | ./docs/ | test
+# MOVED_TO | ./docs/ | test1
+# CREATE | ./docs/ | test2
+# DELETE | ./docs/ | test1
+# DELETE | ./docs/ | test2
+
+		done &
 	pid=$[ "$!" - 1 ]
-	echo "$pid" > "$pid_file"
+	echo "$pid_file"
 	echo $pid
+	echo "$pid" > "$pid_file"
 }
 
 # Function for stop watching a directory
