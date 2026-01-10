@@ -396,6 +396,23 @@ function stop_watching () {
 	rm "$pid_file"
 }
 
+# Print the status of directory watching process
+function status_watching () {
+
+	if [ -f "$pid_file" ]; then
+
+		pid="$(cat "$pid_file")"
+
+		if ps -p $pid > /dev/null 2>&1; then
+			echo "Watching is running with PID: $pid"
+		else
+			echo "PID file exists but there is no process."
+		fi
+	else
+		echo "No active pricess."
+	fi
+}
+
 ################################################################################
 ## Check command-line arguments:
 ################################################################################
@@ -440,7 +457,19 @@ elif [ "$1" == "search" ]; then
 
 elif [ "$1" == "watch" ]; then
 
-	
+	if [ "$2" == "start" ]; then
+
+		start_watching "$3"
+
+	elif [ "$2" == "stop" ]; then
+
+		stop_watching "$3"
+
+	elif [ "$2" == "status" ]; then
+
+		status_watching
+
+	fi
 
 fi
 
