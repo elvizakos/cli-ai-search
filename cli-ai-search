@@ -4,15 +4,17 @@
 [ -f ~/.config/cli-ai-search/config ] && source ~/.config/cli-ai-search/config
 
 ## Initialize basic variables of they haven't been set by config
-[ -z "$ollama" ]       && ollama="http://localhost:11434"				# Ollama IP
-[ -z "$embedmodel" ]   && embedmodel="nomic-embed-text-v2-moe:latest" 	# Name of the embed model to use
-[ -z "$top_k" ]        && top_k=5										# Maximum number of results to return
-[ -z "$temperature" ]  && temperature=0									# The model temperature
+[ -z "$ollama" ]		&& ollama="http://localhost:11434"				# Ollama IP
+[ -z "$embedmodel" ]	&& embedmodel="nomic-embed-text-v2-moe:latest" 	# Name of the embed model to use
+[ -z "$top_k" ]			&& top_k=5										# Maximum number of results to return
+[ -z "$temperature" ]	&& temperature=0								# The model temperature
 
-[ -z "$embeddingsdb" ] && embeddingsdb="./embeddings.sqlite3"			# The path to sqlite3 database
+[ -z "$embeddingsdb" ]	&& embeddingsdb="./embeddings.sqlite3"			# The path to sqlite3 database
 
-[ -z "$chunk_size" ]   && chunk_size=500 #
-[ -z "$overlap" ]      && overlap=100
+[ -z "$chunk_size" ]	&& chunk_size=500								#
+[ -z "$overlap" ]		&& overlap=100
+
+[ -z "pid_file" ]		&& pid_file="/tmp/cli-ai-search-watch.pid"		# File for keeping PID of watching process
 
 # Function for escaping strings for the sqlite3 database
 function escstr () {
@@ -352,6 +354,48 @@ SQL
 	rm -rf "$tmpdir"
 }
 
+# Function for watching a directory
+function start_watching () {
+	local watch_dir="$1"
+
+	if [ -f "$pid_file" ]; then
+		pid="$(cat "$pid_file")"
+		if ps -p $pid > /dev/null 2>&1; then
+			echo "Already started. PID $pid"
+			exit 1
+		else
+			rm "$pid_file"
+		fi
+	fi
+
+	nohup inotifywait -m -r -e create,delete,modify,move "$watch_dir" |
+		while read -r directory events filename; do
+			echo ""
+		done
+	pid=$[ "$!" - 1 ]
+	echo "$pid" > "$pid_file"
+	echo $pid
+}
+
+# Function for stop watching a directory
+function stop_watching () {
+
+	if [ ! -f "$pid_file" ]; then
+		echo "No active watch."
+		exit 1
+	fi
+
+	pid="$(cat "$pid_file")"
+
+	if ps -p $pid > /dev/null 2>&1; then
+		echo "Stopping process $pid..."
+		kill -9 $pid
+	else
+		echo "Process with PID $pid isn't running..."
+	fi
+	rm "$pid_file"
+}
+
 ################################################################################
 ## Check command-line arguments:
 ################################################################################
@@ -393,6 +437,10 @@ elif [ "$1" == "search" ]; then
 	query="$1"
 	results="${2:-$top_k}"
 	search "$query" "$results"
+
+elif [ "$1" == "watch" ]; then
+
+	
 
 fi
 
