@@ -409,7 +409,7 @@ function status_watching () {
 			echo "PID file exists but there is no process."
 		fi
 	else
-		echo "No active pricess."
+		echo "No active process."
 	fi
 }
 
