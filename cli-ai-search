@@ -293,6 +293,17 @@ SQL
 
 }
 
+# Function for deleting a document and all chunks associated with it
+function delete_document () {
+	local filepath="$(escstr "$1")"
+
+	sqlite3 "$embeddingsdb" <<'SQL'
+DELETE FROM chunks WHERE document_id = (SELECT id FROM document WHERE filepath = '$filepath');
+DELETE FROM documents WHERE filepath = '$filepath';
+SQL
+
+}
+
 # Function for the sematic search
 function search () {
 	local query="$1"
