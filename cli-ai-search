@@ -3,11 +3,11 @@
 ## Load config file if exists
 [ -f ~/.config/cli-ai-search/config ] && source ~/.config/cli-ai-search/config
 
-## Initialize basic variables of they haven't been set by config
+## Initialize basic variables if they haven't been set by config
 [ -z "$ollama" ]		&& ollama="http://localhost:11434"				# Ollama IP
 [ -z "$embedmodel" ]	&& embedmodel="nomic-embed-text-v2-moe:latest" 	# Name of the embed model to use
 [ -z "$top_k" ]			&& top_k=5										# Maximum number of results to return
-[ -z "$temperature" ]	&& temperature=0								# The model temperature
+[ -z "$temperature" ]	&& temperature=0								# The model's temperature
 
 [ -z "$embeddingsdb" ]	&& embeddingsdb="./embeddings.sqlite3"			# The path to sqlite3 database
 
