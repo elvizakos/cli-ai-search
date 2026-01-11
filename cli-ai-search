@@ -17,11 +17,13 @@
 [ -z "$pid_file" ]		&& pid_file="/tmp/cli-ai-search-watch.pid"		# File for keeping PID of watching process
 
 # Function for escaping strings for the sqlite3 database
+# @param {string} $1 - The string to be escaped.
 function escstr () {
 	echo "$1" | sed "s/'/''/g"
 }
 
 # Function for building the database
+# @param {string} $1 - The path to the database file.
 function build_database () {
 			local db="${1:-$embeddingsdb}"
 
@@ -59,6 +61,9 @@ SQL
 }
 
 # Function for cutting file contents to smaller pieces
+# @param {string} $1 - The contents of the document to be chunked.
+# @param {number} $2 - The size of each chunk in number of words.
+# @param {number} $3 - The overlap number for the chunks in number of words.
 function chunk_text () {
 	local text="$1"
 	local chunk_size="${2:-$chunk_size}"
@@ -94,6 +99,7 @@ function chunk_text () {
 }
 
 # Function for using embed model for generating embed
+# @param {string} $1 - The string to send to embed model to get the embedding
 function embedding () {
 	local text="$1"
 	local escaped_text=$(echo "$text" | jq -Rs .)
@@ -112,7 +118,9 @@ function embedding () {
 
 }
 
-# Function checking embeds using cosine similarity 
+# Function checking embeds using cosine similarity
+# @param {json array} $1 - The first embedding to be compared.
+# @param {json array} $2 - The second embedding to be compared.
 function cosine_similarity () {
 	awk -v e1="$1" -v e2="$2" '
 	BEGIN {
@@ -141,6 +149,8 @@ function cosine_similarity () {
 }
 
 # Function for adding a document to database
+# @param {string} $1 - The path to the file to be added to database.
+# @param {'y','n'} [$2] - optional. Whether of not to replace the document data if already exists.
 function index_document () {
 
 	local filepath="$1"
@@ -294,6 +304,7 @@ SQL
 }
 
 # Function for deleting a document and all chunks associated with it
+# @param {string} $1 - The path to the document to be deleted from database.
 function delete_document () {
 	local filepath="$(escstr "$1")"
 
@@ -305,6 +316,8 @@ SQL
 }
 
 # Function for the sematic search
+# @param {string} $1 - The search query.
+# @param {number} [$2] - Optional. The number of results to be returned.
 function search () {
 	local query="$1"
 	local top_k="${2:-$top_k}"
@@ -366,6 +379,7 @@ SQL
 }
 
 # Function for watching a directory
+# @param {string} $1 - Directory to start watching for changes.
 function start_watching () {
 	local watch_dir="$1"
 
