@@ -5,14 +5,16 @@ Command line tool for semantic search.
 ## Requirements
 
   * Bash
+  * coreutils
   * curl
   * jq
   * awk or gawk
-  * find
+  * findutils
   * ocrmypdf
-  * tesseract
+  * tesseract-ocr
   * pandoc
   * sqlite3
+  * inotify-tools
   * ollama
 
 ## Supported document formats
