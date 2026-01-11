@@ -32,7 +32,20 @@ Command line tool for semantic search.
 
 ## Install
 
-For local user use only, this 
+For local user use only:
+```sh
+echo ~/.config/cli-ai-search/config <<EOF
+embeddingsdb=~/.local/share/cli-ai-search/embeddings.sqlite3
+ollama="http://localhost:11434"            
+embedmodel="nomic-embed-text-v2-moe:latest"
+EOF
+
+cp cli-ai-search .local/bin/
+chmod +x .local/bin/cli-ai-search
+
+./cli-ai-search build
+./cli-ai-search scan /path/to/documents
+```
 
 ## To Do:
 
