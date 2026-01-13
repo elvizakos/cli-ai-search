@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+VERSION="%%VERSION%%"
+
 ## Load config file if exists
 [ -f ~/.config/cli-ai-search/config ] && source ~/.config/cli-ai-search/config
 
@@ -163,7 +165,7 @@ function index_document () {
 		return 1
 	fi
 
-	local tmpdir="$(mktemp -d --suffix='cli-ai-search')"
+	local tmpdir="$(mktemp -d --suffix='_cli-ai-search')"
 
 	local filename
 	filename=$(basename "$filepath")
@@ -182,7 +184,7 @@ function index_document () {
 
 		echo ""
 		echo -n "	> Extracting text from PDF: "
-		ocrmypdf --deskey -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
+		ocrmypdf --deskew -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
 		content=$(cat "${tmpdir}/extracted.txt")
 		rm -rf "$tmpdir" # Clear tmp
 		echo "Done"
@@ -399,7 +401,7 @@ function start_watching () {
 
 			# case "$events" in
 			# 	CREATE)
-			# 		$0 add "$filename"
+			# 		$0 add "${directory}${filename}"
 			# 		;;
 			# 	MOVED_TO)
 			# 		;;
@@ -516,4 +518,3 @@ elif [ "$1" == "watch" ]; then
 	fi
 
 fi
-
