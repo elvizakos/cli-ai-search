@@ -249,22 +249,20 @@ function index_document () {
 	# Check if document is already in database
 
 	local doc_id
-	doc_id=$(sqlite3 "$embeddingsdb" <<'SQL'
-INSERT INTO document (filename, filepath, content)
-VALUES (
+	doc_id=$(sqlite3 "$embeddingsdb" <<EOF
+INSERT INTO documents (filename, filepath, content) VALUES (
 	'$(escstr "$filename")',
 	'$(escstr "$filepath")',
 	'$(escstr "$content")'
-);
-SELECT last_insert_rowid();
-SQL
+); SELECT last_insert_rowid();
+EOF
 		  )
 
 	# Break content
 	local chunk_index=0
 	local total_chunks=0
 
-	while IFS= read-r chunk; do
+	while IFS= read -r chunk; do
 		[ -z "$chunk" ] && continue
 		total_chunks=$(( total_chunks + 1 ))
 	done < <(chunk_text "$content" "$chunk_size" "$overlap")
