@@ -184,7 +184,9 @@ function index_document () {
 
 		echo ""
 		echo -n "	> Extracting text from PDF: "
-		ocrmypdf --deskew -l ell+eng --force-ocr --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt
+		ocrmypdf --deskew -l ell+eng --output-type pdfa "$filepath" ${tmpdir}/extracted.pdf 2> /dev/null && pdftotext -r 300 ${tmpdir}/extracted.pdf ${tmpdir}/extracted.txt || {
+				pdftotext -r 300 "$filepath" ${tmpdir}/extracted.txt
+		}
 		content=$(cat "${tmpdir}/extracted.txt")
 		rm -rf "$tmpdir" # Clear tmp
 		echo "Done"
@@ -222,11 +224,6 @@ function index_document () {
 					convfrom="-f gfm" # GitHub-Flavored Markdown
 					;;
 
-				ovpn)
-					echo "ERROR: File type not supported" >&2
-					return 1
-					;;
-
 				*)
 					echo "ERROR: Unknown document format: $filepath" >&2
 					return 1
@@ -249,13 +246,14 @@ function index_document () {
 	# Check if document is already in database
 
 	local doc_id
-	doc_id=$(sqlite3 "$embeddingsdb" <<EOF
-INSERT INTO documents (filename, filepath, content) VALUES (
+	doc_id=$(sqlite3 "$embeddingsdb" <<'SQL'
+INSERT INTO documents (filename, filepath, content)
+VALUES (
 	'$(escstr "$filename")',
 	'$(escstr "$filepath")',
 	'$(escstr "$content")'
 ); SELECT last_insert_rowid();
-EOF
+SQL
 		  )
 
 	# Break content
@@ -516,3 +514,4 @@ elif [ "$1" == "watch" ]; then
 	fi
 
 fi
+
