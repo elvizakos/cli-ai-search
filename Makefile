@@ -24,7 +24,7 @@ install-user:
 	cp -r ./cli-ai-search $(HOME)/.local/bin/cli-ai-search
 	sed -i -re 's/%%VERSION%%/$(VERSION)/g' $(HOME)/.local/bin/cli-ai-search
 	chmod +x $(HOME)/.local/bin/cli-ai-search
-
+	$(HOME)/.local/bin/cli-ai-search build
 #	cp -r ./cli-ai-search.man $(HOME)/.local/share/man/man1/cli-ai-search.1
 #	sed -i -re "s/%%VERSION%%/$(VERSION)/g" $(HOME)/.local/share/man/man1/cli-ai-search.1
 
