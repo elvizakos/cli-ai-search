@@ -243,17 +243,20 @@ function index_document () {
 
 	fi
 
-	# Check if document is already in database
+	echo -n "	> Save to database: "
+
+	###
+	# Check if document is already in database and get it's ID
+	###
 
 	local doc_id
-	doc_id=$(sqlite3 "$embeddingsdb" <<'SQL'
-INSERT INTO documents (filename, filepath, content)
-VALUES (
+	doc_id=$(sqlite3 "$embeddingsdb" <<EOF
+INSERT INTO documents (filename, filepath, content) VALUES (
 	'$(escstr "$filename")',
 	'$(escstr "$filepath")',
 	'$(escstr "$content")'
 ); SELECT last_insert_rowid();
-SQL
+EOF
 		  )
 
 	# Break content
@@ -270,6 +273,7 @@ SQL
 	while IFS= read -r chunk; do
 		[ -z "$chunk" ] && continue
 
+		echo -n "."
 		local token_count=${#chunk}
 
 		# Generate embedding
