@@ -41,7 +41,7 @@ make clean
 make install-user
 ```
 
-#### Manually 
+#### Manually
 For local user use only:
 ```sh
 cp cli-ai-search .local/bin/
