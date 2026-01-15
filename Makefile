@@ -21,45 +21,46 @@ $(PACKAGE_DIR):
 
 # Install app for current user only
 install-user:
-	cp -r ./cli-ai-search $(HOME)/.local/bin/cli-ai-search
-	sed -i -re 's/%%VERSION%%/$(VERSION)/g' $(HOME)/.local/bin/cli-ai-search
-	chmod +x $(HOME)/.local/bin/cli-ai-search
-	$(HOME)/.local/bin/cli-ai-search build
-#	cp -r ./cli-ai-search.man $(HOME)/.local/share/man/man1/cli-ai-search.1
-#	sed -i -re "s/%%VERSION%%/$(VERSION)/g" $(HOME)/.local/share/man/man1/cli-ai-search.1
+	cp -r ./cli-ai-search $(HOME)/.local/bin/cli-ai-search									# Copy script to user's bin directory
+	sed -i -re 's/%%VERSION%%/$(VERSION)/g' $(HOME)/.local/bin/cli-ai-search				# Set version number to script's version variable
+	chmod +x $(HOME)/.local/bin/cli-ai-search												# Make script executable
+	$(HOME)/.local/bin/cli-ai-search build													# Build database
+	cp -r ./cli-ai-search.man $(HOME)/.local/share/man/man1/cli-ai-search.1					# Copy manpage
+	sed -i -re "s/%%VERSION%%/$(VERSION)/g" $(HOME)/.local/share/man/man1/cli-ai-search.1	# Set version number
+	gzip -f $(HOME)/.local/share/man/man1/cli-ai-search.1									# Compress manpage
 
 # Uninstall app if was installed for current user only but keep data
 remove-user:
-	rm -f $(HOME)/.local/bin/cli-ai-search
-#	rm -f $(HOME)/.local/share/man/man1/cli-ai-search.1.gz
+	rm -f $(HOME)/.local/bin/cli-ai-search					# Remove script
+	rm -f $(HOME)/.local/share/man/man1/cli-ai-search.1.gz	# Remove manpage
 
 # Uninstall app if was installed for current user only
 purge-user:
-	rm -f $(HOME)/.local/bin/cli-ai-search
-	rm -f $(HOME)/.local/share/man/man1/cli-ai-search.1.gz
-	rm -f "$(HOME)/.local/share/cli-ai-search"
+	rm -f $(HOME)/.local/bin/cli-ai-search					# Remove script
+	rm -f $(HOME)/.local/share/man/man1/cli-ai-search.1.gz	# Remove manpage
+	rm -rf "$(HOME)/.local/share/cli-ai-search"				# Remove directory of the database
 
-# Install app
+# Install app globally
 install: $(PACKAGE_DIR)
-	cp -r ./cli-ai-search $(PACKAGE_DIR)/cli-ai-search
-	sed -i -re 's/%%VERSION%%/$(VERSION)/g' $(PACKAGE_DIR)/cli-ai-search
-	install -Dm755 $(PACKAGE_DIR)/cli-ai-search /usr/local/bin/cli-ai-search
+	cp -r ./cli-ai-search $(PACKAGE_DIR)/cli-ai-search							# Copy script to tmp directory
+	sed -i -re 's/%%VERSION%%/$(VERSION)/g' $(PACKAGE_DIR)/cli-ai-search		# Set version number
+	install -Dm755 $(PACKAGE_DIR)/cli-ai-search /usr/local/bin/cli-ai-search	# Install script to bin directory
 
-	cp -r ./cli-ai-search.man $(PACKAGE_DIR)/cli-ai-search.1
-	sed -i -re "s/%%VERSION%%/$(VERSION)/g" $(PACKAGE_DIR)/cli-ai-search.1
-	gzip -f $(PACKAGE_DIR)/cli-ai-search.1
-	install -Dm644 cli-ai-search.1.gz /usr/share/man/man1/cli-ai-search.1.gz
+	cp -r ./cli-ai-search.man $(PACKAGE_DIR)/cli-ai-search.1					# Copy manpage to tmp directory
+	sed -i -re "s/%%VERSION%%/$(VERSION)/g" $(PACKAGE_DIR)/cli-ai-search.1		# Set version number
+	gzip -f $(PACKAGE_DIR)/cli-ai-search.1										# Compress manpage
+	install -Dm644 cli-ai-search.1.gz /usr/share/man/man1/cli-ai-search.1.gz	# Install manpage to man directory
 
 # Uninstall app but keep data
 remove:
-	rm -f /usr/local/bin/cli-ai-search
-	rm -f /usr/share/man/man1/cli-ai-search.1.gz
+	rm -f /usr/local/bin/cli-ai-search				# Remove Script
+	rm -f /usr/share/man/man1/cli-ai-search.1.gz	# Remove manpage
 
 # Uninstall app and remove data
 purge:
-	rm -f /usr/local/bin/cli-ai-search
-	rm -f /usr/share/man/man1/cli-ai-search.1.gz
-	@for i in $(shell ls /home/); do [ -d "/home/$$i/.config/cli-ai-search/" ] && rm -f "/home/$$i/.config/cli-ai-search/"; done
+	rm -f /usr/local/bin/cli-ai-search				# Remove script
+	rm -f /usr/share/man/man1/cli-ai-search.1.gz	# Remove manpage
+	@for i in $(shell ls /home/); do [ -d "/home/$$i/.config/cli-ai-search/" ] && rm -f "/home/$$i/.config/cli-ai-search/"; done # Remove configuration and databases for all users
 
 # Create deb package
 deb: $(PACKAGE_DIR) deb_manpage deb_scripts deb_application
@@ -86,3 +87,11 @@ deb_scripts: $(PACKAGE_DIR)
 deb_application: $(PACKAGE_DIR)
 	mkdir -p $(PACKAGE_DIR)/usr/local/bin
 	sed -r "s/%%VERSION%%/$(VERSION)/" ./cli-ai-search > $(PACKAGE_DIR)/usr/local/bin/cli-ai-search
+
+# create-config:
+# 	cat > config.txt <<EOF
+# 	Αυτό είναι ένα configuration αρχείο
+# 	Γραμμή 1: value1
+# 	Γραμμή 2: value2
+# 	Τέλος του αρχείου
+# 	EOF
