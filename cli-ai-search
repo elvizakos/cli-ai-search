@@ -27,7 +27,7 @@ function escstr () {
 # Function for building the database
 # @param {string} $1 - The path to the database file.
 function build_database () {
-			local db="${1:-$embeddingsdb}"
+	local db="${1:-$embeddingsdb}"
 
 	[ -f "$db" ] && rm "$db"
 
